@@ -1,0 +1,29 @@
+{
+  "cohort": {
+    "id": "C101",
+    "name": "2026 Level 2"
+  },
+  "students": [
+    {
+      "id": "S001",
+      "name": "Aarav Sharma",
+      "attendancePercentage": 92,
+      "totalAssignments": 10,
+      "submittedAssignments": 9
+    },
+    {
+      "id": "S002",
+      "name": "Diya Patel",
+      "attendancePercentage": 65,
+      "totalAssignments": 10,
+      "submittedAssignments": 5
+    },
+    {
+      "id": "S003",
+      "name": "Kabir Mehta",
+      "attendancePercentage": 80,
+      "totalAssignments": 10,
+      "submittedAssignments": 7
+    }
+  ]
+}
