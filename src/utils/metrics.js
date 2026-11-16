@@ -7,7 +7,7 @@ export function calculateSubmissionPercentage(submitted, total) {
 // PRD At-Risk Rules: Attendance < 75% OR Submission < 60%
 export function checkAtRisk(attendancePercentage, submissionPercentage) {
   const reasons = [];
-  
+
   if (attendancePercentage < 75) {
     reasons.push("Attendance below 75%");
   }
