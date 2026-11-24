@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import {
   Chart as ChartJS,
@@ -11,7 +11,7 @@ import {
   Title
 } from 'chart.js';
 import { Doughnut, Bar } from 'react-chartjs-2';
-import cohortData from './data/samplecohort.json';
+import fallbackCohortData from './data/samplecohort.json';
 import { 
   calculateSubmissionPercentage, 
   calculateCohortAverageAttendance 
@@ -30,20 +30,81 @@ ChartJS.register(
 );
 
 function App() {
-  // Safely extract students array regardless of JSON wrapper
-  const students = Array.isArray(cohortData)
-    ? cohortData
-    : cohortData?.students || [];
+  // Backend API & Data States (FR-11)
+  const [cohortData, setCohortData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [dataSource, setDataSource] = useState('api'); // 'api' or 'fallback'
 
-  const cohortTitle = cohortData?.cohortName || '2026 Level 2 Core - Cohort Dashboard';
-
-  // States: Role Access (FR-10), Search, Filter, Sort, Details Modal, and Feedback Alert
+  // UI States: Role Access (FR-10), Search, Filter, Sort, Details Modal, and Feedback Alert
   const [userRole, setUserRole] = useState('mentor'); // 'mentor' or 'program_lead'
   const [searchQuery, setSearchQuery] = useState('');
   const [showOnlyAtRisk, setShowOnlyAtRisk] = useState(false);
   const [sortOption, setSortOption] = useState('default');
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [feedbackAlert, setFeedbackAlert] = useState(null);
+
+  // Fetch Cohort Data from Node/Express API on mount (FR-11)
+  useEffect(() => {
+    let isMounted = true;
+
+    fetch('http://localhost:5000/api/cohort')
+      .then((res) => {
+        if (!res.ok) throw new Error('API Error');
+        return res.json();
+      })
+      .then((data) => {
+        if (isMounted) {
+          setCohortData(data);
+          setDataSource('api');
+          setFeedbackAlert(null);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setCohortData(fallbackCohortData);
+          setDataSource('fallback');
+          setFeedbackAlert({
+            type: 'warning',
+            message: 'Backend API (localhost:5000) is offline — displaying cached local cohort data.'
+          });
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Manual retry handler for "Retry API" button
+  const handleRetryAPI = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('http://localhost:5000/api/cohort');
+      if (!response.ok) throw new Error('Failed');
+      const data = await response.json();
+      setCohortData(data);
+      setDataSource('api');
+      setFeedbackAlert(null);
+    } catch {
+      setCohortData(fallbackCohortData);
+      setDataSource('fallback');
+      setFeedbackAlert({
+        type: 'warning',
+        message: 'Backend API (localhost:5000) is offline — displaying cached local cohort data.'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Safely extract students array
+  const students = Array.isArray(cohortData)
+    ? cohortData
+    : cohortData?.students || [];
+
+  const cohortTitle = cohortData?.cohortName || '2026 Level 2 Core - Cohort Dashboard';
 
   // 1. Calculate Summary Metrics (FR-02)
   const totalStudents = students.length;
@@ -219,7 +280,7 @@ function App() {
         type: 'success',
         message: `Successfully exported ${displayedStudents.length} student record(s) to CSV.`
       });
-    } catch (error) {
+    } catch {
       setFeedbackAlert({
         type: 'danger',
         message: 'An unexpected error occurred while generating the CSV report. Please try again.'
@@ -227,12 +288,34 @@ function App() {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="container mt-5 text-center">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Loading cohort data...</span>
+        </div>
+        <p className="mt-2 text-muted">Fetching Cohort Health Metrics from API...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="container mt-4 mb-5">
-      {/* Top Header with Role Switcher (FR-10) */}
+      {/* Top Header with Role Switcher & API Status (FR-10 & FR-11) */}
       <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3 border-bottom pb-3">
         <div>
-          <h2 className="mb-0">Cohort Health Metrics Dashboard</h2>
+          <div className="d-flex align-items-center gap-2">
+            <h2 className="mb-0">Cohort Health Metrics Dashboard</h2>
+            {dataSource === 'api' ? (
+              <span className="badge bg-success-subtle text-success border border-success">
+                Live API Connected
+              </span>
+            ) : (
+              <span className="badge bg-warning-subtle text-warning-emphasis border border-warning">
+                Local Fallback
+              </span>
+            )}
+          </div>
           <small className="text-muted">{cohortTitle}</small>
         </div>
 
@@ -279,6 +362,11 @@ function App() {
         <div className={`alert alert-${feedbackAlert.type} d-flex justify-content-between align-items-center`}>
           <span>{feedbackAlert.message}</span>
           <div className="d-flex gap-2">
+            {feedbackAlert.type === 'warning' && (
+              <button className="btn btn-sm btn-outline-dark" onClick={handleRetryAPI}>
+                Retry API
+              </button>
+            )}
             {feedbackAlert.type === 'danger' && (
               <button className="btn btn-sm btn-outline-danger" onClick={handleResetFilters}>
                 Reset Filters
@@ -329,7 +417,7 @@ function App() {
         </div>
       </div>
 
-      {/* Visual Analytics Section (Shown prominently for Program Lead, collapsible/visible) */}
+      {/* Visual Analytics Section (Program Lead View) */}
       {userRole === 'program_lead' && (
         <div className="row mb-4 g-3">
           <div className="col-md-5">
