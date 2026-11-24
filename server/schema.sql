@@ -1,22 +1,29 @@
--- PostgreSQL Schema for Cohort Health Metrics Dashboard (PST_AD_055)
+-- PostgreSQL Schema & Query Optimization for Cohort Health Metrics Dashboard (PST_AD_055)
 
-CREATE TABLE cohorts (
+-- 1. Cohorts Master Table
+CREATE TABLE IF NOT EXISTS cohorts (
     cohort_id SERIAL PRIMARY KEY,
     cohort_name VARCHAR(120) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE students (
+-- 2. Students Metrics Table
+CREATE TABLE IF NOT EXISTS students (
     student_id VARCHAR(20) PRIMARY KEY,
     cohort_id INT REFERENCES cohorts(cohort_id) ON DELETE CASCADE,
     full_name VARCHAR(100) NOT NULL,
-    attendance_percentage NUMERIC(5,2) CHECK (attendance_percentage BETWEEN 0 AND 100),
+    attendance_percentage NUMERIC(5,2) NOT NULL CHECK (attendance_percentage BETWEEN 0 AND 100),
     submitted_assignments INT NOT NULL CHECK (submitted_assignments >= 0),
     total_assignments INT NOT NULL CHECK (total_assignments > 0),
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Query to fetch Cohort Health Metrics with dynamic At-Risk Flagging
+-- 3. Week 9 Performance Indexes (Fast filtering on cohort, attendance & student search)
+CREATE INDEX IF NOT EXISTS idx_students_cohort_id ON students(cohort_id);
+CREATE INDEX IF NOT EXISTS idx_students_attendance ON students(attendance_percentage);
+CREATE INDEX IF NOT EXISTS idx_students_full_name ON students(full_name);
+
+-- 4. Optimized Cohort Health Query with Dynamic At-Risk Flagging
 SELECT 
     student_id,
     full_name,
@@ -30,4 +37,5 @@ SELECT
         ELSE 'On Track'
     END AS status
 FROM students
+WHERE cohort_id = 1
 ORDER BY student_id ASC;
