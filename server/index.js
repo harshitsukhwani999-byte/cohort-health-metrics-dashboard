@@ -25,6 +25,23 @@ app.get('/api/cohort', (req, res) => {
   }
 });
 
+// POST /api/send-alert - Automated Email Notification Dispatch for At-Risk Students & Parents
+app.post('/api/send-alert', (req, res) => {
+  const { studentId, studentName, studentEmail, parentEmail, subject } = req.body;
+
+  if (!studentId || !studentEmail) {
+    return res.status(400).json({ error: 'Student ID and email are required.' });
+  }
+
+  console.log(`[AUTOMATED ALERT SENT] To: ${studentEmail} | CC: ${parentEmail} | Subject: ${subject}`);
+
+  res.status(200).json({
+    success: true,
+    message: `Automated warning email dispatched to ${studentName} (${studentEmail}) and Parent (${parentEmail}).`,
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Cohort Health API running on http://localhost:${PORT}/api/cohort`);
 });

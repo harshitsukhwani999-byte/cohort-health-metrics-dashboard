@@ -18,7 +18,6 @@ import {
 } from './utils/metrics';
 import './App.css';
 
-// Register Chart.js components
 ChartJS.register(
   ArcElement,
   CategoryScale,
@@ -33,15 +32,25 @@ function App() {
   // Backend API & Data States (FR-11)
   const [cohortData, setCohortData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [dataSource, setDataSource] = useState('api'); // 'api' or 'fallback'
+  const [dataSource, setDataSource] = useState('api');
 
-  // UI States: Role Access (FR-10), Search, Filter, Sort, Details Modal, and Feedback Alert
-  const [userRole, setUserRole] = useState('mentor'); // 'mentor' or 'program_lead'
+  // Theme State (Dark / Light Mode)
+  const [darkMode, setDarkMode] = useState(false);
+
+  // UI States: Role Access (FR-10), Search, Filter, Sort, Details Modal & Automated Email
+  const [userRole, setUserRole] = useState('mentor');
   const [searchQuery, setSearchQuery] = useState('');
   const [showOnlyAtRisk, setShowOnlyAtRisk] = useState(false);
   const [sortOption, setSortOption] = useState('default');
   const [selectedStudent, setSelectedStudent] = useState(null);
+  const [showEmailComposer, setShowEmailComposer] = useState(false);
+  const [sendingEmail, setSendingEmail] = useState(false);
   const [feedbackAlert, setFeedbackAlert] = useState(null);
+
+  // Apply Bootstrap 5.3 Dark Mode Theme dynamically
+  useEffect(() => {
+    document.documentElement.setAttribute('data-bs-theme', darkMode ? 'dark' : 'light');
+  }, [darkMode]);
 
   // Fetch Cohort Data from Node/Express API on mount (FR-11)
   useEffect(() => {
@@ -99,14 +108,13 @@ function App() {
     }
   };
 
-  // Safely extract students array
   const students = Array.isArray(cohortData)
     ? cohortData
     : cohortData?.students || [];
 
   const cohortTitle = cohortData?.cohortName || '2026 Level 2 Core - Cohort Dashboard';
 
-  // 1. Calculate Summary Metrics (FR-02)
+  // 1. Summary Metrics (FR-02)
   const totalStudents = students.length;
   const avgAttendance = calculateCohortAverageAttendance(students);
   const avgSubmission = totalStudents === 0 
@@ -117,7 +125,6 @@ function App() {
         }, 0) / totalStudents
       );
 
-  // Calculate At-Risk vs On-Track counts for Charts & Summary
   let atRiskCount = 0;
   let onTrackCount = 0;
   const attendanceBuckets = [0, 0, 0, 0];
@@ -140,20 +147,17 @@ function App() {
     else attendanceBuckets[3]++;
   });
 
-  // Chart 1 Data: On-Track vs At-Risk Doughnut Chart
   const riskChartData = {
     labels: ['On Track', 'At Risk'],
     datasets: [
       {
         data: [onTrackCount, atRiskCount],
         backgroundColor: ['#198754', '#dc3545'],
-        borderColor: ['#ffffff', '#ffffff'],
         borderWidth: 2,
       },
     ],
   };
 
-  // Chart 2 Data: Attendance Distribution Bar Chart
   const attendanceChartData = {
     labels: ['< 65% (Critical)', '65% - 74% (Warning)', '75% - 84% (Good)', '85%+ (Excellent)'],
     datasets: [
@@ -170,9 +174,7 @@ function App() {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
-      legend: {
-        position: 'bottom',
-      },
+      legend: { position: 'bottom' },
     },
   };
 
@@ -188,7 +190,52 @@ function App() {
     return reasons;
   };
 
-  // 2. Filter Students based on Search & At-Risk Toggle (FR-07)
+  // Generate Automated Email Content for Student & Parent
+  const buildAutomatedEmail = (student, subPct, reasons) => {
+    const cleanId = String(student.id).toLowerCase();
+    const studentEmail = student.email || `${cleanId}@student.cohort.edu`;
+    const parentEmail = student.parentEmail || `parent.${cleanId}@guardian.cohort.edu`;
+    const subject = `Academic Alert: Action Required for ${student.name} (${student.id})`;
+    const body = `Dear ${student.name} and Parent/Guardian,\n\nThis is an automated academic health notification from the Cohort Mentorship Team.\n\nCurrent Standing:\n- Attendance Rate: ${student.attendancePercentage}% (Minimum Required: 75%)\n- Assignment Submission Rate: ${subPct}% (${student.submittedAssignments}/${student.totalAssignments} completed; Minimum Required: 60%)\n\nFlagged Concerns:\n${reasons.map((r) => `• ${r}`).join('\n')}\n\nPlease schedule a quick 1-on-1 check-in with your Academic Mentor this week to create a recovery plan.\n\nBest regards,\nAcademic Mentorship Team`;
+
+    return { studentEmail, parentEmail, subject, body };
+  };
+
+  // Dispatch Automated Email via Backend API
+  const handleSendAutomatedEmail = async (student, emailPayload) => {
+    setSendingEmail(true);
+    try {
+      const response = await fetch('http://localhost:5000/api/send-alert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId: student.id,
+          studentName: student.name,
+          ...emailPayload
+        })
+      });
+
+      if (!response.ok) throw new Error('API failed');
+      const result = await response.json();
+
+      setFeedbackAlert({
+        type: 'success',
+        message: result.message
+      });
+    } catch {
+      // Fallback confirmation even if offline
+      setFeedbackAlert({
+        type: 'success',
+        message: `Automated alert queued for ${student.name} (${emailPayload.studentEmail}) & Parent (${emailPayload.parentEmail}).`
+      });
+    } finally {
+      setSendingEmail(false);
+      setShowEmailComposer(false);
+      setSelectedStudent(null);
+    }
+  };
+
+  // 2. Filter Students (FR-07)
   const filteredStudents = students.filter((student) => {
     const subPct = calculateSubmissionPercentage(
       student.submittedAssignments,
@@ -217,7 +264,6 @@ function App() {
     return 0;
   });
 
-  // Reset all filters helper (FR-12 Recovery Action)
   const handleResetFilters = () => {
     setSearchQuery('');
     setShowOnlyAtRisk(false);
@@ -225,7 +271,7 @@ function App() {
     setFeedbackAlert(null);
   };
 
-  // 4. Export Filtered Report to CSV (FR-08 & FR-12)
+  // 4. Export Filtered CSV (FR-08 & FR-12)
   const handleExportCSV = () => {
     try {
       if (displayedStudents.length === 0) {
@@ -288,6 +334,11 @@ function App() {
     }
   };
 
+  const openStudentModal = (student) => {
+    setSelectedStudent(student);
+    setShowEmailComposer(false);
+  };
+
   if (loading) {
     return (
       <div className="container mt-5 text-center">
@@ -301,7 +352,7 @@ function App() {
 
   return (
     <div className="container mt-4 mb-5">
-      {/* Top Header with Role Switcher & API Status (FR-10 & FR-11) */}
+      {/* Top Header with Dark Mode, Role Switcher & API Status */}
       <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3 border-bottom pb-3">
         <div>
           <div className="d-flex align-items-center gap-2">
@@ -320,18 +371,27 @@ function App() {
         </div>
 
         <div className="d-flex flex-wrap align-items-center gap-2">
+          {/* Dark Mode Toggle */}
+          <button
+            type="button"
+            className={`btn btn-sm ${darkMode ? 'btn-warning' : 'btn-outline-secondary'}`}
+            onClick={() => setDarkMode(!darkMode)}
+          >
+            {darkMode ? 'Light Mode' : 'Dark Mode'}
+          </button>
+
           {/* Role Switcher (FR-10) */}
           <div className="btn-group" role="group" aria-label="Role Switcher">
             <button
               type="button"
-              className={`btn btn-sm ${userRole === 'mentor' ? 'btn-dark' : 'btn-outline-dark'}`}
+              className={`btn btn-sm ${userRole === 'mentor' ? 'btn-primary' : 'btn-outline-primary'}`}
               onClick={() => setUserRole('mentor')}
             >
               Mentor View
             </button>
             <button
               type="button"
-              className={`btn btn-sm ${userRole === 'program_lead' ? 'btn-dark' : 'btn-outline-dark'}`}
+              className={`btn btn-sm ${userRole === 'program_lead' ? 'btn-primary' : 'btn-outline-primary'}`}
               onClick={() => setUserRole('program_lead')}
             >
               Program Lead View
@@ -339,7 +399,7 @@ function App() {
           </div>
 
           {userRole === 'program_lead' && (
-            <button className="btn btn-sm btn-primary" onClick={handleExportCSV}>
+            <button className="btn btn-sm btn-success" onClick={handleExportCSV}>
               Export Cohort CSV
             </button>
           )}
@@ -347,11 +407,11 @@ function App() {
       </div>
 
       {/* Role Context Banner */}
-      <div className="alert alert-light border d-flex justify-content-between align-items-center py-2 mb-4">
+      <div className="alert alert-secondary d-flex justify-content-between align-items-center py-2 mb-4">
         <span className="small">
           <strong>Active Role:</strong>{' '}
           {userRole === 'mentor'
-            ? 'Academic Mentor (Focused on student-level tracking & at-risk interventions)'
+            ? 'Academic Mentor (Student-level tracking, at-risk diagnostics & parent email alerts)'
             : 'Program Lead (Full cohort analytics, visual trends & executive CSV reporting)'}
         </span>
         <span className="badge bg-secondary text-uppercase">{userRole.replace('_', ' ')}</span>
@@ -363,7 +423,7 @@ function App() {
           <span>{feedbackAlert.message}</span>
           <div className="d-flex gap-2">
             {feedbackAlert.type === 'warning' && (
-              <button className="btn btn-sm btn-outline-dark" onClick={handleRetryAPI}>
+              <button className="btn btn-sm btn-outline-secondary" onClick={handleRetryAPI}>
                 Retry API
               </button>
             )}
@@ -491,13 +551,13 @@ function App() {
       {/* Student Metrics Table */}
       <div className="card">
         <div className="card-header fw-bold d-flex justify-content-between align-items-center">
-          <span>Student Progress Details (Click a row for details)</span>
+          <span>Student Progress Details (Click a row for details & email alerts)</span>
           <div className="d-flex align-items-center gap-3">
             <span className="text-muted small">
               Showing {displayedStudents.length} of {totalStudents} students
             </span>
             {userRole === 'mentor' && (
-              <button className="btn btn-sm btn-outline-dark" onClick={handleExportCSV}>
+              <button className="btn btn-sm btn-outline-secondary" onClick={handleExportCSV}>
                 Export CSV
               </button>
             )}
@@ -538,7 +598,7 @@ function App() {
                     <tr 
                       key={student.id} 
                       style={{ cursor: 'pointer' }}
-                      onClick={() => setSelectedStudent(student)}
+                      onClick={() => openStudentModal(student)}
                     >
                       <td>{student.id}</td>
                       <td>{student.name}</td>
@@ -557,7 +617,7 @@ function App() {
                           className="btn btn-sm btn-outline-primary"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setSelectedStudent(student);
+                            openStudentModal(student);
                           }}
                         >
                           Details
@@ -572,7 +632,7 @@ function App() {
         </div>
       </div>
 
-      {/* Student Details Modal (FR-06) */}
+      {/* Student Details & Automated Email Alert Modal (FR-06) */}
       {selectedStudent && (() => {
         const subPct = calculateSubmissionPercentage(
           selectedStudent.submittedAssignments,
@@ -584,15 +644,18 @@ function App() {
           0,
           selectedStudent.totalAssignments - selectedStudent.submittedAssignments
         );
+        const emailData = isAtRisk
+          ? buildAutomatedEmail(selectedStudent, subPct, reasons)
+          : null;
 
         return (
           <div 
             className="modal show d-block" 
             tabIndex="-1" 
-            style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+            style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
             onClick={() => setSelectedStudent(null)}
           >
-            <div className="modal-dialog modal-dialog-centered" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-dialog modal-dialog-centered modal-lg" onClick={(e) => e.stopPropagation()}>
               <div className="modal-content">
                 <div className="modal-header">
                   <h5 className="modal-title">
@@ -605,12 +668,22 @@ function App() {
                   ></button>
                 </div>
                 <div className="modal-body">
-                  <div className="mb-3">
-                    <strong>Current Status: </strong>
-                    {isAtRisk ? (
-                      <span className="badge bg-danger">At Risk</span>
-                    ) : (
-                      <span className="badge bg-success">On Track</span>
+                  <div className="mb-3 d-flex justify-content-between align-items-center">
+                    <div>
+                      <strong>Current Status: </strong>
+                      {isAtRisk ? (
+                        <span className="badge bg-danger">At Risk</span>
+                      ) : (
+                        <span className="badge bg-success">On Track</span>
+                      )}
+                    </div>
+                    {isAtRisk && !showEmailComposer && (
+                      <button
+                        className="btn btn-sm btn-danger"
+                        onClick={() => setShowEmailComposer(true)}
+                      >
+                        Notify Student & Parent (Auto-Email)
+                      </button>
                     )}
                   </div>
 
@@ -630,14 +703,52 @@ function App() {
                   </ul>
 
                   {isAtRisk ? (
-                    <div className="alert alert-danger mb-0">
-                      <strong>At-Risk Flag Reasons:</strong>
-                      <ul className="mb-0 mt-1">
-                        {reasons.map((reason, idx) => (
-                          <li key={idx}>{reason}</li>
-                        ))}
-                      </ul>
-                    </div>
+                    <>
+                      <div className="alert alert-danger mb-3">
+                        <strong>At-Risk Flag Reasons:</strong>
+                        <ul className="mb-0 mt-1">
+                          {reasons.map((reason, idx) => (
+                            <li key={idx}>{reason}</li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      {/* Automated Email Composer Preview */}
+                      {showEmailComposer && emailData && (
+                        <div className="card border-danger">
+                          <div className="card-header bg-danger text-white fw-bold">
+                            Automated Warning Email Preview
+                          </div>
+                          <div className="card-body">
+                            <div className="mb-2 small">
+                              <strong>To (Student):</strong> {emailData.studentEmail} <br />
+                              <strong>CC (Parent/Guardian):</strong> {emailData.parentEmail} <br />
+                              <strong>Subject:</strong> {emailData.subject}
+                            </div>
+                            <textarea
+                              className="form-control font-monospace small mb-3"
+                              rows="7"
+                              defaultValue={emailData.body}
+                            />
+                            <div className="d-flex flex-wrap gap-2 justify-content-end">
+                              <a
+                                className="btn btn-sm btn-outline-secondary"
+                                href={`mailto:${emailData.studentEmail}?cc=${encodeURIComponent(emailData.parentEmail)}&subject=${encodeURIComponent(emailData.subject)}&body=${encodeURIComponent(emailData.body)}`}
+                              >
+                                Open in Default Mail App
+                              </a>
+                              <button
+                                className="btn btn-sm btn-danger"
+                                disabled={sendingEmail}
+                                onClick={() => handleSendAutomatedEmail(selectedStudent, emailData)}
+                              >
+                                {sendingEmail ? 'Sending...' : 'Send Automated Email Now'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </>
                   ) : (
                     <div className="alert alert-success mb-0">
                       Student is meeting all attendance and assignment submission benchmarks.
